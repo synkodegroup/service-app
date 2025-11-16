@@ -11,7 +11,8 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Search, MoreHorizontal, Edit, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -32,16 +33,13 @@ type Pagination = {
   total_pages: number
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8082'
 
 console.log("API_BASE", API_BASE)
 
 export default function Products() {
   const { toast } = useToast()
-  const [items, setItems] = useState<Product[]>([])
-  const [pagination, setPagination] = useState<Pagination | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [, setError] = useState<string | null>(null)
+  const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize] = useState(10)
@@ -63,25 +61,20 @@ export default function Products() {
     return name.length >= 3 && price > 0 && stock >= 0
   }, [formName, formPrice, formStock])
 
-  const fetchProducts = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), search: search })
+  const listQuery = useQuery<{ data: Product[]; pagination: Pagination }, Error>({
+    queryKey: ['products', { page, pageSize, search }],
+    queryFn: async () => {
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), search })
       const res = await fetch(`${API_BASE}/api/v1/products?${params.toString()}`)
       if (!res.ok) throw new Error('Failed to fetch')
-      const data = await res.json()
-      setItems(data.data ?? [])
-      setPagination(data.pagination ?? null)
-    } catch (e: any) {
-      setError(e?.message ?? 'Error')
-      toast({ title: 'Failed to load', description: e?.message ?? 'Error' })
-    } finally {
-      setLoading(false)
-    }
-  }
+      return res.json() as Promise<{ data: Product[]; pagination: Pagination }>
+    },
+    placeholderData: keepPreviousData,
+  })
 
-  useEffect(() => { fetchProducts() }, [page, pageSize, search])
+  const items = listQuery.data?.data ?? []
+  const pagination = listQuery.data?.pagination ?? null
+  const loading = listQuery.isFetching
 
   const resetForm = () => {
     setFormName('')
@@ -90,23 +83,22 @@ export default function Products() {
     setFormStatus('active')
   }
 
-  const onCreate = async () => {
-    if (!validForm) return
-    try {
-      setLoading(true)
+  const createMutation = useMutation({
+    mutationFn: async () => {
       const body = { name: formName.trim(), price: Number(formPrice), stock: Number(formStock), status: formStatus }
       const res = await fetch(`${API_BASE}/api/v1/products`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (!res.ok) throw new Error('Create failed')
+      return res.json()
+    },
+    onSuccess: () => {
       toast({ title: 'Product created' })
       setOpenCreate(false)
       resetForm()
-      fetchProducts()
-    } catch (e: any) {
-      toast({ title: 'Create error', description: e?.message ?? 'Error' })
-    } finally {
-      setLoading(false)
-    }
-  }
+      qc.invalidateQueries({ queryKey: ['products'] })
+    },
+    onError: (e: unknown) => { const msg = e instanceof Error ? e.message : 'Error'; toast({ title: 'Create error', description: msg }) },
+  })
+  const onCreate = async () => { if (!validForm) return; await createMutation.mutateAsync() }
 
   const onEditOpen = (p: Product) => {
     setCurrent(p)
@@ -117,42 +109,42 @@ export default function Products() {
     setOpenEdit(true)
   }
 
-  const onUpdate = async () => {
-    if (!current || !validForm) return
-    try {
-      setLoading(true)
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      if (!current) throw new Error('No product')
       const body = { name: formName.trim(), price: Number(formPrice), stock: Number(formStock), status: formStatus }
       const res = await fetch(`${API_BASE}/api/v1/products/${current.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (!res.ok) throw new Error('Update failed')
+      return res.json()
+    },
+    onSuccess: () => {
       toast({ title: 'Product updated' })
       setOpenEdit(false)
       setCurrent(null)
       resetForm()
-      fetchProducts()
-    } catch (e: any) {
-      toast({ title: 'Update error', description: e?.message ?? 'Error' })
-    } finally {
-      setLoading(false)
-    }
-  }
+      qc.invalidateQueries({ queryKey: ['products'] })
+    },
+    onError: (e: unknown) => { const msg = e instanceof Error ? e.message : 'Error'; toast({ title: 'Update error', description: msg }) },
+  })
+  const onUpdate = async () => { if (!current || !validForm) return; await updateMutation.mutateAsync() }
 
   const onDeleteOpen = (p: Product) => { setCurrent(p); setOpenDelete(true) }
-  const onDelete = async () => {
-    if (!current) return
-    try {
-      setLoading(true)
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!current) throw new Error('No product')
       const res = await fetch(`${API_BASE}/api/v1/products/${current.id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Delete failed')
+      return res.json()
+    },
+    onSuccess: () => {
       toast({ title: 'Product deleted' })
       setOpenDelete(false)
       setCurrent(null)
-      fetchProducts()
-    } catch (e: any) {
-      toast({ title: 'Delete error', description: e?.message ?? 'Error' })
-    } finally {
-      setLoading(false)
-    }
-  }
+      qc.invalidateQueries({ queryKey: ['products'] })
+    },
+    onError: (e: unknown) => { const msg = e instanceof Error ? e.message : 'Error'; toast({ title: 'Delete error', description: msg }) },
+  })
+  const onDelete = async () => { if (!current) return; await deleteMutation.mutateAsync() }
 
   return (
     <div className="space-y-6">
@@ -185,7 +177,7 @@ export default function Products() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((product) => (
+              {items.map((product: Product) => (
                 <TableRow key={product.id}>
                   <TableCell className="font-medium">{product.name}</TableCell>
                   <TableCell>${product.price.toFixed(2)}</TableCell>
