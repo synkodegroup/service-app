@@ -15,7 +15,6 @@ import (
     "service-app/internal/repository"
     "service-app/internal/route"
     "service-app/internal/service"
-    product "service-app/internal/product"
 )
 
 func main() {
@@ -41,8 +40,8 @@ func main() {
     userHandler := h.NewUserHandler(userSvc)
 
     prodRepo := repository.NewGormProductRepository(db)
-    prodSvc := product.NewService(prodRepo)
-    prodHandler := product.NewHandler(prodSvc)
+    prodSvc := service.NewProductService(prodRepo)
+    prodHandler := h.NewProductHandler(prodSvc)
 
 
     route.Register(r, cfg, userHandler, prodHandler)

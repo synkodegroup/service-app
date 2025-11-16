@@ -6,10 +6,9 @@ import (
   "service-app/internal/config"
   h "service-app/internal/handler"
   "service-app/internal/middleware"
-  p "service-app/internal/product"
 )
 
-func Register(r *gin.Engine, cfg config.Config, user *h.UserHandler, product *p.Handler) {
+func Register(r *gin.Engine, cfg config.Config, user *h.UserHandler, product *h.ProductHandler) {
   r.Use(middleware.Auth())
 
   r.Use(cors.New(cors.Config{

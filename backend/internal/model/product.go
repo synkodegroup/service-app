@@ -1,4 +1,4 @@
-package product
+package model
 
 import "time"
 
@@ -29,4 +29,13 @@ type Pagination struct {
 type ListResponse struct {
     Data       []Product  `json:"data"`
     Pagination Pagination `json:"pagination"`
+}
+
+type ListParams struct {
+    Page     int
+    PageSize int
+    Search   string
+    Status   Status
+    SortBy   string
+    SortDir  string // asc|desc
 }
