@@ -8,7 +8,7 @@ import Customers from './pages/Customers';
 import Settings from './pages/Settings';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [currentPage, setCurrentPage] = useState('products');
 
   const renderPage = () => {
     switch (currentPage) {

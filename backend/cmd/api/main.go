@@ -9,57 +9,48 @@ import (
     "syscall"
     "time"
 
-    "github.com/gin-contrib/cors"
     "github.com/gin-gonic/gin"
-
+    "service-app/internal/config"
+    h "service-app/internal/handler"
+    "service-app/internal/repository"
+    "service-app/internal/route"
+    "service-app/internal/service"
     product "service-app/internal/product"
 )
 
-func getEnv(key, def string) string {
-    if v := os.Getenv(key); v != "" {
-        return v
-    }
-    return def
-}
-
 func main() {
-    port := getEnv("PORT", "8080")
-    origins := getEnv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174")
+    cfg := config.Load()
 
     r := gin.New()
     r.Use(gin.Recovery())
     r.Use(gin.Logger())
-    r.Use(cors.New(cors.Config{
-        AllowOrigins:     splitCSV(origins),
-        AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-        AllowHeaders:     []string{"Content-Type", "Authorization"},
-        ExposeHeaders:    []string{"Content-Length"},
-        AllowCredentials: true,
-        MaxAge:           12 * time.Hour,
-    }))
 
-    r.GET("/healthz", func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{"status": "ok"})
-    })
-
-    repo := product.NewMemoryRepository()
-    svc := product.NewService(repo)
-    h := product.NewHandler(svc)
-
-    v1 := r.Group("/api/v1")
-    {
-        products := v1.Group("/products")
-        products.GET("", h.List)
-        products.GET(":id", h.Get)
-        products.POST("", h.Create)
-        products.PUT(":id", h.Update)
-        products.DELETE(":id", h.Delete)
+    dsn := cfg.DatabaseURL
+    if dsn == "" {
+        dsn = cfg.DirectURL
     }
+    db, err := repository.OpenPostgres(dsn)
+    if err != nil { log.Fatalf("db: %v", err) }
+    sqlDB, _ := db.DB()
+    sqlDB.SetMaxOpenConns(25)
+    sqlDB.SetMaxIdleConns(25)
+    sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
-    srv := &http.Server{Addr: ":" + port, Handler: r}
+    userRepo := repository.NewGormUserRepository(db)
+    userSvc := service.NewUserService(userRepo)
+    userHandler := h.NewUserHandler(userSvc)
+
+    prodRepo := repository.NewGormProductRepository(db)
+    prodSvc := product.NewService(prodRepo)
+    prodHandler := product.NewHandler(prodSvc)
+
+
+    route.Register(r, cfg, userHandler, prodHandler)
+
+    srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
 
     go func() {
-        log.Printf("backend listening on http://localhost:%s", port)
+        log.Printf("backend listening on http://localhost:%s", cfg.Port)
         if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
             log.Fatalf("listen: %v", err)
         }
@@ -73,23 +64,4 @@ func main() {
     if err := srv.Shutdown(ctx); err != nil {
         log.Fatalf("Server Shutdown: %v", err)
     }
-}
-
-func splitCSV(s string) []string {
-    var out []string
-    curr := ""
-    for i := 0; i < len(s); i++ {
-        if s[i] == ',' {
-            if curr != "" {
-                out = append(out, curr)
-                curr = ""
-            }
-        } else {
-            curr += string(s[i])
-        }
-    }
-    if curr != "" {
-        out = append(out, curr)
-    }
-    return out
 }

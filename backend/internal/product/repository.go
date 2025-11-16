@@ -37,7 +37,6 @@ func (m *MemoryRepository) List(params ListParams) (ListResponse, error) {
         arr = append(arr, p)
     }
 
-    // Filter search
     if params.Search != "" {
         q := strings.ToLower(strings.TrimSpace(params.Search))
         tmp := arr[:0]
@@ -48,7 +47,7 @@ func (m *MemoryRepository) List(params ListParams) (ListResponse, error) {
         }
         arr = tmp
     }
-    // Filter status
+
     if params.Status == StatusActive || params.Status == StatusInactive {
         tmp := arr[:0]
         for _, p := range arr {
@@ -59,7 +58,6 @@ func (m *MemoryRepository) List(params ListParams) (ListResponse, error) {
         arr = tmp
     }
 
-    // Sort
     sort.Slice(arr, func(i, j int) bool {
         less := false
         switch params.SortBy {
@@ -81,68 +79,28 @@ func (m *MemoryRepository) List(params ListParams) (ListResponse, error) {
     })
 
     total := len(arr)
-    if params.PageSize <= 0 {
-        params.PageSize = 10
-    }
-    if params.Page <= 0 {
-        params.Page = 1
-    }
+    if params.PageSize <= 0 { params.PageSize = 10 }
+    if params.Page <= 0 { params.Page = 1 }
     start := (params.Page - 1) * params.PageSize
-    if start > total {
-        start = total
-    }
+    if start > total { start = total }
     end := start + params.PageSize
-    if end > total {
-        end = total
-    }
+    if end > total { end = total }
     pageItems := make([]Product, end-start)
     copy(pageItems, arr[start:end])
-
     totalPages := (total + params.PageSize - 1) / params.PageSize
 
-    return ListResponse{
-        Data: pageItems,
-        Pagination: Pagination{
-            Page:       params.Page,
-            PageSize:   params.PageSize,
-            TotalItems: total,
-            TotalPages: totalPages,
-        },
-    }, nil
+    return ListResponse{ Data: pageItems, Pagination: Pagination{ Page: params.Page, PageSize: params.PageSize, TotalItems: total, TotalPages: totalPages } }, nil
 }
 
-func (m *MemoryRepository) Get(id string) (Product, bool) {
-    p, ok := m.items[id]
-    return p, ok
-}
-
-func (m *MemoryRepository) Create(p Product) (Product, error) {
-    m.items[p.ID] = p
-    return p, nil
-}
-
-func (m *MemoryRepository) Update(id string, p Product) (Product, error) {
-    m.items[id] = p
-    return p, nil
-}
-
-func (m *MemoryRepository) Delete(id string) bool {
-    if _, ok := m.items[id]; ok {
-        delete(m.items, id)
-        return true
-    }
-    return false
-}
-
+func (m *MemoryRepository) Get(id string) (Product, bool) { p, ok := m.items[id]; return p, ok }
+func (m *MemoryRepository) Create(p Product) (Product, error) { m.items[p.ID] = p; return p, nil }
+func (m *MemoryRepository) Update(id string, p Product) (Product, error) { m.items[id] = p; return p, nil }
+func (m *MemoryRepository) Delete(id string) bool { if _, ok := m.items[id]; ok { delete(m.items, id); return true }; return false }
 func (m *MemoryRepository) ExistsByName(name string, excludeID string) bool {
     lower := strings.ToLower(strings.TrimSpace(name))
     for id, p := range m.items {
-        if excludeID != "" && id == excludeID {
-            continue
-        }
-        if strings.ToLower(p.Name) == lower {
-            return true
-        }
+        if excludeID != "" && id == excludeID { continue }
+        if strings.ToLower(p.Name) == lower { return true }
     }
     return false
 }
