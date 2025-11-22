@@ -1,235 +1,303 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
-  getProducts,
-  createProduct,
-  updateProduct,
-  deleteProduct,
-  type Product,
-  type ListParams,
-} from '@/lib/api'
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Plus, Search, MoreHorizontal, Edit, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useToast } from '@/hooks/use-toast';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 
-type Mode = 'list' | 'create' | 'edit'
-
-const defaultParams: Required<ListParams> = {
-  page: 1,
-  page_size: 10,
-  search: '',
-  status: '' as any,
-  sort_by: 'updated_at',
-  sort_dir: 'desc',
+type Product = {
+  id: string
+  name: string
+  price: number
+  stock: number
+  status: 'active' | 'inactive'
 }
 
-export default function ProductsPage() {
-  const [params, setParams] = useState(defaultParams)
-  const [mode, setMode] = useState<Mode>('list')
-  const [editing, setEditing] = useState<Product | null>(null)
+type Pagination = {
+  page: number
+  page_size: number
+  total_items: number
+  total_pages: number
+}
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8082'
+
+console.log("API_BASE", API_BASE)
+
+export default function Products() {
+  const { toast } = useToast()
   const qc = useQueryClient()
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize] = useState(10)
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['products', params],
-    queryFn: () => getProducts(params),
+  const [openCreate, setOpenCreate] = useState(false)
+  const [openEdit, setOpenEdit] = useState(false)
+  const [openDelete, setOpenDelete] = useState(false)
+  const [current, setCurrent] = useState<Product | null>(null)
+
+  const [formName, setFormName] = useState('')
+  const [formPrice, setFormPrice] = useState('')
+  const [formStock, setFormStock] = useState('')
+  const [formStatus, setFormStatus] = useState<'active' | 'inactive'>('active')
+
+  const validForm = useMemo(() => {
+    const name = formName.trim()
+    const price = Number(formPrice)
+    const stock = Number(formStock)
+    return name.length >= 3 && price > 0 && stock >= 0
+  }, [formName, formPrice, formStock])
+
+  const listQuery = useQuery<{ data: Product[]; pagination: Pagination }, Error>({
+    queryKey: ['products', { page, pageSize, search }],
+    queryFn: async () => {
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), search })
+      const res = await fetch(`${API_BASE}/api/v1/products?${params.toString()}`)
+      if (!res.ok) throw new Error('Failed to fetch')
+      return res.json() as Promise<{ data: Product[]; pagination: Pagination }>
+    },
+    placeholderData: keepPreviousData,
   })
 
-  const createMut = useMutation({
-    mutationFn: (b: Pick<Product, 'name' | 'price' | 'stock' | 'status'>) => createProduct(b),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['products'] }),
-  })
-  const updateMut = useMutation({
-    mutationFn: (b: Pick<Product, 'name' | 'price' | 'stock' | 'status'>) => updateProduct(editing!.id, b),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['products'] }),
-  })
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => deleteProduct(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['products'] }),
-  })
+  const items = listQuery.data?.data ?? []
+  const pagination = listQuery.data?.pagination ?? null
+  const loading = listQuery.isFetching
 
-  const [form, setForm] = useState({ name: '', price: '', stock: '', status: 'active' })
-  const valid = useMemo(() => {
-    const name = form.name.trim()
-    const price = Number(form.price)
-    const stock = Number(form.stock)
-    return name.length >= 3 && name.length <= 100 && price > 0 && stock >= 0 && (form.status === 'active' || form.status === 'inactive')
-  }, [form])
+  const resetForm = () => {
+    setFormName('')
+    setFormPrice('')
+    setFormStock('')
+    setFormStatus('active')
+  }
 
-  useEffect(() => {
-    if (mode === 'edit' && editing) {
-      setForm({ name: editing.name, price: String(editing.price), stock: String(editing.stock), status: editing.status })
-    } else if (mode === 'create') {
-      setForm({ name: '', price: '', stock: '', status: 'active' })
-    }
-  }, [mode, editing])
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const body = { name: formName.trim(), price: Number(formPrice), stock: Number(formStock), status: formStatus }
+      const res = await fetch(`${API_BASE}/api/v1/products`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (!res.ok) throw new Error('Create failed')
+      return res.json()
+    },
+    onSuccess: () => {
+      toast({ title: 'Product created' })
+      setOpenCreate(false)
+      resetForm()
+      qc.invalidateQueries({ queryKey: ['products'] })
+    },
+    onError: (e: unknown) => { const msg = e instanceof Error ? e.message : 'Error'; toast({ title: 'Create error', description: msg }) },
+  })
+  const onCreate = async () => { if (!validForm) return; await createMutation.mutateAsync() }
+
+  const onEditOpen = (p: Product) => {
+    setCurrent(p)
+    setFormName(p.name)
+    setFormPrice(String(p.price))
+    setFormStock(String(p.stock))
+    setFormStatus(p.status)
+    setOpenEdit(true)
+  }
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      if (!current) throw new Error('No product')
+      const body = { name: formName.trim(), price: Number(formPrice), stock: Number(formStock), status: formStatus }
+      const res = await fetch(`${API_BASE}/api/v1/products/${current.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (!res.ok) throw new Error('Update failed')
+      return res.json()
+    },
+    onSuccess: () => {
+      toast({ title: 'Product updated' })
+      setOpenEdit(false)
+      setCurrent(null)
+      resetForm()
+      qc.invalidateQueries({ queryKey: ['products'] })
+    },
+    onError: (e: unknown) => { const msg = e instanceof Error ? e.message : 'Error'; toast({ title: 'Update error', description: msg }) },
+  })
+  const onUpdate = async () => { if (!current || !validForm) return; await updateMutation.mutateAsync() }
+
+  const onDeleteOpen = (p: Product) => { setCurrent(p); setOpenDelete(true) }
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!current) throw new Error('No product')
+      const res = await fetch(`${API_BASE}/api/v1/products/${current.id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Delete failed')
+      return res.json()
+    },
+    onSuccess: () => {
+      toast({ title: 'Product deleted' })
+      setOpenDelete(false)
+      setCurrent(null)
+      qc.invalidateQueries({ queryKey: ['products'] })
+    },
+    onError: (e: unknown) => { const msg = e instanceof Error ? e.message : 'Error'; toast({ title: 'Delete error', description: msg }) },
+  })
+  const onDelete = async () => { if (!current) return; await deleteMutation.mutateAsync() }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-4">Products</h1>
-
-      <div className="flex flex-wrap gap-2 items-end mb-4">
-        <div className="flex flex-col">
-          <label className="text-sm">Search</label>
-          <input
-            className="border rounded px-2 py-1"
-            placeholder="Search by name"
-            value={params.search}
-            onChange={(e) => setParams((p) => ({ ...p, search: e.target.value, page: 1 }))}
-          />
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between gap-6">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Search products..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <div className="flex flex-col">
-          <label className="text-sm">Status</label>
-          <select
-            className="border rounded px-2 py-1"
-            value={params.status}
-            onChange={(e) => setParams((p) => ({ ...p, status: e.target.value as any, page: 1 }))}
-          >
-            <option value="">All</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
+        <div className="flex items-center gap-3">
+          <Button onClick={() => setOpenCreate(true)} disabled={loading}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Product
+          </Button>
         </div>
-        <div className="flex flex-col">
-          <label className="text-sm">Sort By</label>
-          <select
-            className="border rounded px-2 py-1"
-            value={params.sort_by}
-            onChange={(e) => setParams((p) => ({ ...p, sort_by: e.target.value as any }))}
-          >
-            <option value="updated_at">Updated</option>
-            <option value="name">Name</option>
-            <option value="price">Price</option>
-            <option value="stock">Stock</option>
-          </select>
-        </div>
-        <div className="flex flex-col">
-          <label className="text-sm">Direction</label>
-          <select
-            className="border rounded px-2 py-1"
-            value={params.sort_dir}
-            onChange={(e) => setParams((p) => ({ ...p, sort_dir: e.target.value as any }))}
-          >
-            <option value="asc">Asc</option>
-            <option value="desc">Desc</option>
-          </select>
-        </div>
-        <div className="flex flex-col">
-          <label className="text-sm">Page Size</label>
-          <select
-            className="border rounded px-2 py-1"
-            value={params.page_size}
-            onChange={(e) => setParams((p) => ({ ...p, page_size: Number(e.target.value), page: 1 }))}
-          >
-            <option value={10}>10</option>
-            <option value={20}>20</option>
-            <option value={50}>50</option>
-          </select>
-        </div>
-        <button className="ml-auto bg-blue-600 text-white px-3 py-2 rounded" onClick={() => setMode('create')}>Create Product</button>
       </div>
 
-      <div className="bg-white border rounded overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-3 py-2">Name</th>
-              <th className="px-3 py-2">Price</th>
-              <th className="px-3 py-2">Stock</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Updated At</th>
-              <th className="px-3 py-2">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && Array.from({ length: params.page_size }).map((_, i) => (
-              <tr key={i} className="animate-pulse">
-                <td className="px-3 py-2"><div className="h-4 bg-gray-200 rounded" /></td>
-                <td className="px-3 py-2"><div className="h-4 bg-gray-200 rounded" /></td>
-                <td className="px-3 py-2"><div className="h-4 bg-gray-200 rounded" /></td>
-                <td className="px-3 py-2"><div className="h-4 bg-gray-200 rounded" /></td>
-                <td className="px-3 py-2"><div className="h-4 bg-gray-200 rounded" /></td>
-                <td className="px-3 py-2"></td>
-              </tr>
-            ))}
-            {!isLoading && data && data.data.length === 0 && (
-              <tr>
-                <td className="px-3 py-6 text-center" colSpan={6}>
-                  No products. <button className="text-blue-600 underline" onClick={() => setMode('create')}>Create one</button>
-                </td>
-              </tr>
-            )}
-            {!isLoading && data?.data.map((p: Product) => (
-              <tr key={p.id} className="border-t">
-                <td className="px-3 py-2">{p.name}</td>
-                <td className="px-3 py-2">${p.price.toFixed(2)}</td>
-                <td className="px-3 py-2">{p.stock}</td>
-                <td className="px-3 py-2">{p.status}</td>
-                <td className="px-3 py-2">{new Date(p.updated_at).toLocaleString()}</td>
-                <td className="px-3 py-2 flex gap-2">
-                  <button className="px-2 py-1 border rounded" onClick={() => { setEditing(p); setMode('edit') }}>Edit</button>
-                  <button className="px-2 py-1 border rounded text-red-600" onClick={() => deleteMut.mutate(p.id)}>Delete</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card>
+        <CardHeader>
+          <h2 className="text-xl font-semibold">Products</h2>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Price</TableHead>
+                <TableHead>Stock</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((product: Product) => (
+                <TableRow key={product.id}>
+                  <TableCell className="font-medium">{product.name}</TableCell>
+                  <TableCell>${product.price.toFixed(2)}</TableCell>
+                  <TableCell>{product.stock}</TableCell>
+                  <TableCell>
+                    <Badge variant={product.status === 'active' ? 'default' : 'secondary'}>
+                      {product.status === 'active' ? 'Active' : 'Inactive'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button variant="ghost" size="icon" onClick={() => onEditOpen(product)}>
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => onDeleteOpen(product)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
 
-      <div className="flex items-center gap-2 mt-4">
-        <button
-          className="px-3 py-1 border rounded"
-          disabled={params.page <= 1}
-          onClick={() => setParams((p) => ({ ...p, page: Math.max(1, p.page - 1) }))}
-        >Prev</button>
-        <span>Page {data?.pagination.page ?? params.page} / {data?.pagination.total_pages ?? '–'}</span>
-        <button
-          className="px-3 py-1 border rounded"
-          disabled={!!data && params.page >= data.pagination.total_pages}
-          onClick={() => setParams((p) => ({ ...p, page: p.page + 1 }))}
-        >Next</button>
-      </div>
-
-      {(mode === 'create' || mode === 'edit') && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="bg-white w-full max-w-md rounded p-4 shadow">
-            <h2 className="text-lg font-semibold mb-2">{mode === 'create' ? 'Create' : 'Edit'} Product</h2>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm">Name</label>
-                <input className="w-full border rounded px-2 py-1" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-              </div>
-              <div>
-                <label className="text-sm">Price</label>
-                <input type="number" step="0.01" className="w-full border rounded px-2 py-1" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} />
-              </div>
-              <div>
-                <label className="text-sm">Stock</label>
-                <input type="number" className="w-full border rounded px-2 py-1" value={form.stock} onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))} />
-              </div>
-              <div>
-                <label className="text-sm">Status</label>
-                <select className="w-full border rounded px-2 py-1" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </div>
+          <div className="mt-4 flex items-center justify-between">
+            <div className="text-sm text-muted-foreground">
+              {pagination ? `Page ${pagination.page} of ${pagination.total_pages}` : ''}
             </div>
-            <div className="flex justify-end gap-2 mt-4">
-              <button className="px-3 py-1 border rounded" onClick={() => { setMode('list'); setEditing(null) }}>Cancel</button>
-              <button
-                className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
-                disabled={!valid || createMut.isPending || updateMut.isPending}
-                onClick={() => {
-                  const body = { name: form.name.trim(), price: Number(form.price), stock: Number(form.stock), status: form.status as Product['status'] }
-                  const done = () => { setMode('list'); setEditing(null) }
-                  mode === 'create' ? createMut.mutate(body, { onSuccess: done }) : updateMut.mutate(body, { onSuccess: done })
-                }}
-              >Save</button>
+            <div className="flex gap-2">
+              <Button variant="outline" disabled={loading || page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</Button>
+              <Button variant="outline" disabled={loading || (pagination ? page >= pagination.total_pages : true)} onClick={() => setPage((p) => p + 1)}>Next</Button>
             </div>
           </div>
-        </div>
-      )}
+        </CardContent>
+      </Card>
 
-      {error && (
-        <div className="mt-4 text-red-600">Error loading products</div>
-      )}
+      <Dialog open={openCreate} onOpenChange={setOpenCreate}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Product</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Name</Label>
+              <Input id="name" value={formName} onChange={(e) => setFormName(e.target.value)} />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="price">Price</Label>
+                <Input id="price" type="number" step="0.01" value={formPrice} onChange={(e) => setFormPrice(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="stock">Stock</Label>
+                <Input id="stock" type="number" value={formStock} onChange={(e) => setFormStock(e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <div className="flex gap-2">
+                <Button variant={formStatus === 'active' ? 'default' : 'outline'} onClick={() => setFormStatus('active')}>Active</Button>
+                <Button variant={formStatus === 'inactive' ? 'default' : 'outline'} onClick={() => setFormStatus('inactive')}>Inactive</Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpenCreate(false)}>Cancel</Button>
+            <Button onClick={onCreate} disabled={!validForm || loading}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={openEdit} onOpenChange={setOpenEdit}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Product</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name2">Name</Label>
+              <Input id="name2" value={formName} onChange={(e) => setFormName(e.target.value)} />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="price2">Price</Label>
+                <Input id="price2" type="number" step="0.01" value={formPrice} onChange={(e) => setFormPrice(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="stock2">Stock</Label>
+                <Input id="stock2" type="number" value={formStock} onChange={(e) => setFormStock(e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <div className="flex gap-2">
+                <Button variant={formStatus === 'active' ? 'default' : 'outline'} onClick={() => setFormStatus('active')}>Active</Button>
+                <Button variant={formStatus === 'inactive' ? 'default' : 'outline'} onClick={() => setFormStatus('inactive')}>Inactive</Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpenEdit(false)}>Cancel</Button>
+            <Button onClick={onUpdate} disabled={!validForm || loading}>Update</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={openDelete} onOpenChange={setOpenDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this product?</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={onDelete}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
